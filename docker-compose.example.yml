@@ -1,0 +1,191 @@
+version: "3.9"
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: microservice_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - microservice_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: microservice_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - microservice_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # API Gateway (Port 3000)
+  api-gateway:
+    build:
+      context: ./ApiGateway
+      dockerfile: Dockerfile
+    container_name: api_gateway
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      FRONTEND_URL: http://localhost:3005
+      AUTH_SERVICE_URL: http://auth-service:3001
+      TRANSACTION_SERVICE_URL: http://transaction-service:3002
+      DEBT_SERVICE_URL: http://debt-service:3003
+      ANALYTICS_SERVICE_URL: http://analytics-service:3004
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+    depends_on:
+      - auth-service
+      - transaction-service
+      - debt-service
+      - analytics-service
+    networks:
+      - microservice_network
+    restart: unless-stopped
+
+  # Auth Service (Port 3001)
+  auth-service:
+    build:
+      context: ./AuthService
+      dockerfile: Dockerfile
+    container_name: auth_service
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      FRONTEND_URL: http://localhost:3005
+      DB_HOST: postgres
+      DB_USERNAME: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: Auth_db
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET}
+      JWT_SECRET: ${JWT_SECRET}
+      ACCESS_TOKEN_EXPIRY: 15m
+      REFRESH_TOKEN_EXPIRY: 7d
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservice_network
+    restart: unless-stopped
+
+  # Transaction Service (Port 3002)
+  transaction-service:
+    build:
+      context: ./TransactionService
+      dockerfile: Dockerfile
+    container_name: transaction_service
+    ports:
+      - "3002:3002"
+    environment:
+      PORT: 3002
+      FRONTEND_URL: http://localhost:3005
+      DB_HOST: postgres
+      DB_USERNAME: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: Transaction_db
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      ANALYTICS_SERVICE_URL: http://analytics-service:3004
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET}
+      ACCESS_TOKEN_EXPIRY: 15m
+      REFRESH_TOKEN_EXPIRY: 7d
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservice_network
+    restart: unless-stopped
+
+  # Debt Service (Port 3003)
+  debt-service:
+    build:
+      context: ./DebtService
+      dockerfile: Dockerfile
+    container_name: debt_service
+    ports:
+      - "3003:3003"
+    environment:
+      PORT: 3003
+      FRONTEND_URL: http://localhost:3005
+      DB_HOST: postgres
+      DB_USERNAME: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: Debt_db
+      AUTH_SERVICE_URL: http://auth-service:3001
+      ANALYTICS_SERVICE_URL: http://analytics-service:3004
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET}
+      ACCESS_TOKEN_EXPIRY: 15m
+      REFRESH_TOKEN_EXPIRY: 7d
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      - microservice_network
+    restart: unless-stopped
+
+  # Analytics Service (Port 3004)
+  analytics-service:
+    build:
+      context: ./AnalyticsService
+      dockerfile: Dockerfile
+    container_name: analytics_service
+    ports:
+      - "3004:3004"
+    environment:
+      PORT: 3004
+      FRONTEND_URL: http://localhost:3005
+      REDIS_URL: redis://redis:6379
+      TRANSACTION_SERVICE_URL: http://transaction-service:3002
+      DEBT_SERVICE_URL: http://debt-service:3003
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET}
+      ACCESS_TOKEN_EXPIRY: 15m
+      REFRESH_TOKEN_EXPIRY: 7d
+      DB_NAME: Analytics_db
+      DB_USERNAME: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_HOST: postgres
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservice_network
+    restart: unless-stopped
+
+networks:
+  microservice_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
